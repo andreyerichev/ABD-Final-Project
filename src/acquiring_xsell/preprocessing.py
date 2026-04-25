@@ -1,39 +1,101 @@
 """
 Модуль хранит функции для предобработки исходных данных.
 - Заполнение пропусков
+- Приведение типов
 - Преобразование дат
-- Разделение на обучающую и тестовую выборки
-- Разделение исходного датасета на датасеты для каждого продукта
 """
 
 import pandas as pd
 
 
-def add_first_month_p1p2(df: pd.DataFrame) -> pd.DataFrame:
+def process_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Добавляет столбец `first_month_p1p2` в DataFrame, который указывает,
-    когда клиент подключил продукт P1P2. В качестве значения берется минимальная дата из дат подключения продуктов P1 и P2.
-    После чего удаляется столбец `first_month_p1` и `first_month_p2`.
+    Приводит типы столбцов к необходимому типу.
+    - Даты преобразуются в datetime
+    - Логические столбцы преобразуются в int8
     Args:
         df: pd.DataFrame
             Исходный DataFrame
+    Returns:
+        pd.DataFrame
+            Подготовленный DataFrame
     """
     df = df.copy()
 
-    df['first_month_p1p2'] = df[['first_month_p1', 'first_month_p2']].min(axis=1)
-    
-    df = df.drop(columns=['first_month_p1', 'first_month_p2'])
+    dttm_cols = [
+        'month',
+        'first_trx_month_inn',
+        'last_active_month_inn',
+        'first_month_p1',
+        'first_month_p2',
+        'first_month_p3',
+        'first_month_altpay5',
+    ]
+
+    bool_cols = df.select_dtypes(include='bool').columns
+
+    for col in dttm_cols:
+        df[col] = pd.to_datetime(df[col])   
+
+    for col in bool_cols:
+        df[col] = df[col].astype('int8')
 
     return df
 
 
-# TODO: Добавить функцию для создания датасета для переданного продукта
-def make_product_df(base_df: pd.DataFrame, product: str) -> pd.DataFrame:
+def fill_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Собирает датафрейм для переданного продукта
+    Заполняет пропуски в DataFrame.
     Args:
-        base_df: pd.DataFrame
+        df: pd.DataFrame
             Исходный DataFrame
-        product: str
-            Название продукта
+    Returns:
+        pd.DataFrame
+        DataFrame с заполненными пропусками
     """
+    df = df.copy()
+
+    # 'top_mcc_group_inn' для оттёкших и новых оттёкших клиентов
+    # Логика: если компания на момент текущего месяца находится в оттоке, 
+    # то она не может иметь группу MCC, так как нет транзакций
+    df.loc[
+        (df['inn_status'].isin(['Churn', 'New Churn'])) & (df['top_mcc_group_inn'].isna()),
+        'top_mcc_group_inn'
+    ] = 'Churn'
+
+    # 'top_mcc_group_inn' для активных и возрождённых клиентов
+    # Логика: если компания на момент текущего месяца находится в активном или возрождённом статусе, 
+    # то она не может не иметь группу MCC
+    df.loc[
+        df['inn_status'].isin(['Active', 'Reborn']) & (df['top_mcc_group_inn'].isna()),
+        'top_mcc_group_inn'
+    ] = 'No MCC Group'
+
+    # 'last_active_month_inn' для старого привлечения
+    # Логика: если компания была привлечена давно, то её последний активный месяц не может быть определён, 
+    # поэтому заполняем пропуски константным значением: минимальный 'last_active_month_inn' по всему датасету минус 2 месяца
+    df.loc[
+        df['last_active_month_inn'].isna(),
+        'last_active_month_inn'
+    ] = df['last_active_month_inn'].min() - pd.DateOffset(months=2)
+
+    # 'other_active_product_cnt'
+    # Логика: если нет данных об активных продуктах на какой-либо месяц, считаем что их не было
+    df['other_active_product_cnt'] = df['other_active_product_cnt'].fillna(0)
+
+    # 'change_to_prev_month' столбцы
+    # Логика: если нет данных о изменении метрики отношения к предыдущему месяцу,
+    # заполняем пропуски нейтральным значением 0 и добавляем флаги 'is_first_trx_month' и 'is_left_time_border'
+    change_to_prev_month_cols = [col for col in df.columns if col.endswith("_change_to_prev_month")]
+    df[change_to_prev_month_cols] = df[change_to_prev_month_cols].fillna(0)
+
+    # С коэффициентами вариации логика та же
+    cv_cols = [col for col in df.columns if "_cv_" in col]
+    df[cv_cols] = df[cv_cols].fillna(0)
+
+    # 'who_is_this_first_inn'
+    # Было обнаружено всего 15 наблюдений с пропущенным значением в этом столбце,
+    # поэтому удаляем их из датасета
+    df = df[df['who_is_this_first_inn'].notna()]
+
+    return df
