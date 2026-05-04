@@ -5,7 +5,125 @@
 import pandas as pd
 from typing import List
 
-K_VALUES = [500, 1000, 1500, 2000, 2500]
+K_VALUES = [500, 1000, 1500, 2000]
+
+
+def precision_k(data: pd.DataFrame, y_score_col: str, k: int, ascending: bool = False) -> float:
+    """
+    Рассчитывает Precision@K, macro average by 'month'.
+    Args:
+        data: pd.DataFrame
+            Данные для расчёта метрик
+        y_score_col: str
+            Имя столбца, содержащего y_score
+        k: int
+            Значение K
+        ascending: bool = False
+            Флаг, указывающий, что нужно ранжировать по возрастанию y_score
+    """
+    precision_k = (
+        data
+        .sort_values(by=y_score_col, ascending=ascending)
+        .groupby('month')
+        .head(k)
+        .groupby('month')['target']
+        .mean()
+    ).fillna(0).mean()
+    
+    return precision_k
+
+
+def recall_k(data: pd.DataFrame, y_score_col: str, k: int, ascending: bool = False) -> float:
+    """
+    Рассчитывает Recall@K, macro average by 'month'.
+    Args:
+        data: pd.DataFrame
+            Данные для расчёта метрик
+        y_score_col: str
+            Имя столбца, содержащего y_score
+        k: int
+            Значение K
+        ascending: bool = False
+            Флаг, указывающий, что нужно ранжировать по возрастанию y_score
+    """
+    tp = (
+        data
+        .sort_values(by=y_score_col, ascending=ascending)
+        .groupby('month')
+        .head(k)
+        .groupby('month')['target']
+        .sum()
+    )
+    total_pos = (
+        data
+        .groupby('month')['target']
+        .sum()
+    )
+    
+    tp, total_pos = tp.align(total_pos, fill_value=0)
+    
+    recall_k = (tp / total_pos).fillna(0).mean()
+    
+    return recall_k
+
+
+def expected_conversions_k(data: pd.DataFrame, y_score_col: str, k: int, ascending: bool = False) -> float:
+    """
+    Рассчитывает Expected Conversions@K, macro average by 'month'.
+    Args:
+        data: pd.DataFrame
+            Данные для расчёта метрик
+        y_score_col: str
+            Имя столбца, содержащего y_score
+        k: int
+        ascending: bool = False
+            Флаг, указывающий, что нужно ранжировать по возрастанию y_score
+    """
+    expected_conversions_k = (
+        data
+        .sort_values(by=y_score_col, ascending=ascending)
+        .groupby('month')
+        .head(k)
+        .groupby('month')['target']
+        .sum()
+    ).fillna(0).mean()
+    
+    return expected_conversions_k
+
+
+def calculate_all_metrics_k(data: pd.DataFrame, y_score_col: str = 'y_proba', k_values: List[int] = K_VALUES, ascending: bool = False) -> pd.DataFrame:
+    """
+    Рассчитывает все метрики@K, macro average by 'month'.
+    Args:
+        data: pd.DataFrame
+            Данные для расчёта метрик
+        y_score_col: str
+            Имя столбца, содержащего y_score
+        k_values: List[int] = K_VALUES
+            Список значений K для расчёта метрик
+        ascending: bool = False
+            Флаг, указывающий, что нужно ранжировать по возрастанию y_score
+    """
+    df = pd.DataFrame(columns=['Precision', 'Recall', 'Expected Conversions'], index=k_values)
+    for k in k_values:
+        df.loc[k] = {
+            'Precision': precision_k(data, y_score_col, k, ascending),
+            'Recall': recall_k(data, y_score_col, k, ascending),
+            'Expected Conversions': expected_conversions_k(data, y_score_col, k, ascending)
+        }
+    return df
+
+
+
+
+
+
+
+
+###############################################################
+################### DEPRECATED FUNCTIONS ######################
+###############################################################
+
 
 
 def calculate_top_k_base(

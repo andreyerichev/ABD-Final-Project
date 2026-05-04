@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_PATH = BASE_DIR / "data" / "raw" / "vkr_data_2.csv"  # Датасет с заполненными пропусками в скользящих метриках
+DEFAULT_PATH = BASE_DIR / "data" / "raw" / "vkr_data.csv"
 
 
 def load_data(path: Path = DEFAULT_PATH) -> pd.DataFrame:

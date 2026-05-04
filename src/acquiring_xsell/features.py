@@ -135,6 +135,19 @@ def add_rule_flag_product(df: pd.DataFrame, product: str) -> pd.DataFrame:
     return df
 
 
+def add_became_active_recently(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Добавляет столбец `became_active_recently` в DataFrame.
+    Значением являетется 1, если lifetime_month_streak_inn > 0 и lifetime_month_streak_inn <= 3.
+    """
+    df = df.copy()
+    df['became_active_recently'] = (
+        (df['lifetime_month_streak_inn'] > 0) &
+        (df['lifetime_month_streak_inn'] <= 3)
+    ).astype('int8')
+    return df
+
+
 def drop_dttm_cols(df: pd.DataFrame) -> pd.DataFrame:
     """
     Удаляет все столбцы с датами из DataFrame
@@ -147,12 +160,16 @@ def drop_dttm_cols(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame без столбцов с датами
     """
     df = df.copy()
-    dttm_cols = [col for col in df.select_dtypes(include='datetime').columns if col != 'month']
-    df = df.drop(columns=dttm_cols)
+    cols_to_drop = [
+        'inn',
+        "last_active_month_inn",
+        "first_trx_month_inn",
+    ]
+    df = df.drop(columns=cols_to_drop)
     return df
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
+def build_features(df: pd.DataFrame, drop_dttm_cols: bool = True) -> pd.DataFrame:
     """
     Собирает все признаки в DataFrame.
     Args:
@@ -174,7 +191,9 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_rule_flag_product(df, "p1p2")
     df = add_rule_flag_product(df, "p3")
     df = add_rule_flag_product(df, "altpay5")
-    # df = drop_dttm_cols(df)
+    df = add_became_active_recently(df)
+    if drop_dttm_cols:
+        df = drop_dttm_cols(df)
     return df
 
 

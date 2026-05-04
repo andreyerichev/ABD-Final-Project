@@ -33,10 +33,20 @@ def process_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         'first_month_altpay5',
     ]
 
+    cat_cols = [
+        'inn_status',
+        'top_mcc_group_inn',
+        'who_is_this_first_inn',
+        'current_segment_inn',
+    ]
+
     bool_cols = df.select_dtypes(include='bool').columns
 
     for col in dttm_cols:
-        df[col] = pd.to_datetime(df[col])   
+        df[col] = pd.to_datetime(df[col])
+
+    for col in cat_cols:
+        df[col] = df[col].astype('category')
 
     for col in bool_cols:
         df[col] = df[col].astype('int8')
@@ -60,6 +70,7 @@ def fill_top_mcc_group_inn(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame с заполненными пропусками в столбце 'top_mcc_group_inn'
     """
     df = df.copy()
+    df['top_mcc_group_inn'] = df['top_mcc_group_inn'].cat.add_categories(['No MCC Group', 'Churn'])
     mask = df['top_mcc_group_inn'].isna()
     df.loc[mask & df['inn_status'].isin(['Churn', 'New Churn']), 'top_mcc_group_inn'] = 'Churn'
     df.loc[mask & df['inn_status'].isin(['Active', 'Reborn']), 'top_mcc_group_inn'] = 'No MCC Group'
@@ -148,7 +159,7 @@ def fill_cv(df: pd.DataFrame) -> pd.DataFrame:
 def fill_who_is_this_first_inn(df: pd.DataFrame) -> pd.DataFrame:
     """
     Заполняет пропуски в столбце 'who_is_this_first_inn'.
-    Логика: если who_is_this_first_inn is NaN, то удаляем строку
+    Логика: если who_is_this_first_inn is NaN, то удаляем строку (изначально была всего одна ИНН с NaN в этом столбце)
     
     Args:
         df: pd.DataFrame
@@ -158,6 +169,7 @@ def fill_who_is_this_first_inn(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame с заполненными пропусками в столбце 'who_is_this_first_inn'
     """
     df = df.copy()
+    assert df[df['who_is_this_first_inn'].isna()]['inn'].nunique() == 1
     df = df[df['who_is_this_first_inn'].notna()]
     return df
 
@@ -188,80 +200,29 @@ def fill_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def simple_month_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def train_test_month_split(df: pd.DataFrame, border_month: str = '2025-12-01', get_valid: bool = False):
     """
     Разбивает DataFrame на train и test по месяцам.
-    Логика: делим на train и test 80% и 20% соответственно.
+    Логика: делим на train и test 80% и 20% соответственно, если get_valid = False, иначе делим на train, valid и test 60% 20% и 20% соответственно.
     Args:
         df: pd.DataFrame
             Исходный DataFrame
+        get_valid: bool = False
+            Флаг, указывающий, что нужно вернуть valid DataFrame
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]
-        Tuple с train и test DataFrames и месяцами для train и test
+        tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series] или tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]
+        Tuple с train и test DataFrames и месяцами для train и test, если get_valid = False, иначе Tuple с train, valid и test DataFrames и месяцами для train, valid и test
     """
     df = df.copy()
-    train = df[df['month'] < '2025-12-01']
-    test = df[df['month'] >= '2025-12-01']
-    month_train = train['month']
-    month_test = test['month']
-    return train, test, month_train, month_test
+    border_month = pd.to_datetime(border_month)
 
-
-class MonthTimeSeriesSplit:
-    """
-    Разбивает DataFrame на train и test по месяцам.
-    Логика: используется expanding window time-series split.
-    Args:
-        n_splits: int
-            Количество разбиений
-        min_train_months: int
-            Минимальное количество месяцев для train
-        test_size_months: int
-            Количество месяцев для test
-        gap_months: int
-           Пропуск между train и test
-        month_col: str
-            Название столбца с месяцами
-    """
-    def __init__(
-        self,
-        n_splits: int = 3,
-        min_train_months: int = 6,
-        test_size_months: int = 3,
-        gap_months: int = 0,
-        month_col: str = "month",
-    ):
-        self.month_col = month_col
-        self.n_splits = n_splits
-        self.min_train_months = min_train_months
-        self.test_size_months = test_size_months
-        self.gap_months = gap_months
-
-    def split(self, df: pd.DataFrame):
-        df = df.copy()
-
-        months = sorted(df[self.month_col].dropna().unique())
-
-        if len(months) < self.min_train_months + self.test_size_months:
-            raise ValueError("Недостаточно месяцев для запрошенной конфигурации")
-
-        splits = []
-
-        for i in range(self.n_splits):
-
-            train_end = self.min_train_months + i * self.test_size_months
-            test_start = train_end + self.gap_months
-            test_end = test_start + self.test_size_months
-
-            if test_end > len(months):
-                break
-
-            train_months = months[:train_end]
-            test_months = months[test_start:test_end]
-
-            train_df = df[df[self.month_col].isin(train_months)].copy()
-            test_df = df[df[self.month_col].isin(test_months)].copy()
-
-            splits.append((train_df, test_df))
-
-        return splits
+    if get_valid:
+        train = df[df['month'] < border_month - pd.DateOffset(months=3)]
+        valid = df[(df['month'] >= border_month - pd.DateOffset(months=3)) & (df['month'] < border_month)]
+        test = df[df['month'] >= border_month]
+        return train, valid, test
+        
+    else:
+        train = df[df['month'] < border_month]
+        test = df[df['month'] >= border_month]
+        return train, test
