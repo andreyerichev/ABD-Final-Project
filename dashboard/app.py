@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -5,8 +7,26 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_PATH = BASE_DIR / "outputs" / "predictions.csv"
+INFERENCE_SCRIPT = BASE_DIR / "inference.py"
+
 
 st.header("X-Sell Model Predictions")
+
+if st.button("Обновить", type="primary"):
+    with st.spinner("Обновление предсказаний…"):
+        result = subprocess.run(
+            [sys.executable, str(INFERENCE_SCRIPT)],
+            capture_output=True,
+            text=True,
+            cwd=str(BASE_DIR),
+        )
+    if result.returncode == 0:
+        st.cache_data.clear()
+        st.success("Предсказания обновлены")
+        st.rerun()
+    else:
+        st.error("Ошибка обновления предсказаний")
+        st.code(result.stderr or result.stdout)
 
 
 @st.cache_data
@@ -89,7 +109,7 @@ col_metric, col_chart = st.columns([1, 2])
 
 with col_metric:
     st.metric(
-        label="Суммарный Expected Value (по фильтрам)",
+        label="Expected Value",
         value=f"{df_display['expected_value'].sum():,.2f}",
     )
 
@@ -104,7 +124,7 @@ with col_chart:
         x="relevant_product",
         y="expected_value",
         labels={"relevant_product": "Продукт", "expected_value": "Expected Value"},
-        title="Expected Value по продукту",
+        title="Expected Value по продуктам",
         text_auto=".2s",
     )
     fig.update_layout(margin=dict(t=40, b=0, l=0, r=0))
