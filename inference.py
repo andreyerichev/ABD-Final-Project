@@ -1,102 +1,133 @@
 import joblib
 import pandas as pd
+import numpy as np
+
 from acquiring_xsell.data import load_data
 from acquiring_xsell.preprocessing import process_dtypes, fill_missing_values
 from acquiring_xsell.features import build_features, make_product_df
 
-OUTPUT_COLS = [
-    'inn',
-    'inn_status',
-    'first_trx_month_inn',
-    'current_segment_inn',
-    'top_mcc_group_inn',
-    'who_is_this_first_inn',
-    'real_kam_on_inn',
-    'turnover_ma_3m',
-    'cnt_trx_ma_3m',
-    'avg_check_wma_3m',
-    'relevant_product',
-    'expected_value',
-]
+class BusinessRuleModel:
+    def __init__(self):
+        self.score_col = "turnover"
+        self.flag_col = "rule_flag_p3"
+        self.min_ = None
+        self.max_ = None
 
-PRE_SCALED_FEATURES = [
-    'cnt_trx',
-    'turnover',
-    'avg_check',
-    'turnover_ma_2m',
-    'turnover_ema_2m',
-    'turnover_ma_3m',
-    'turnover_ema_3m',
-    'turnover_ma_6m',
-    'turnover_ema_6m',
-    'cnt_trx_ma_2m',
-    'cnt_trx_ema_2m',
-    'cnt_trx_ma_3m',
-    'cnt_trx_ema_3m',
-    'cnt_trx_ma_6m',
-    'cnt_trx_ema_6m',
-    'avg_check_wma_2m',
-    'avg_check_wma_3m',
-    'avg_check_wma_6m',
-    'altpay1_turnover',
-    'altpay2_turnover',
-    'altpay3_turnover',
-    'altpay4_turnover',
-    'altpay5_turnover',
-    'altpay6_turnover',
-]
+    def fit(self, X, y=None):
+        scores = X[self.score_col].values
+        self.min_ = scores.min()
+        self.max_ = scores.max()
+        return self
 
-P1P2_VALUE = 40_000
-P3_VALUE = 15_000
-ALTPAY5_VALUE = 25_000
+    def predict_score(self, X):
+        scores = X[self.score_col].values
+        flags = X[self.flag_col].values
+
+        norm_scores = (scores - self.min_) / (self.max_ - self.min_ + 1e-9)
+        norm_scores = np.where(flags == 1, 0.0, norm_scores)
+
+        return norm_scores
+
+    def predict_proba(self, X):
+        s = self.predict_score(X)
+        return np.vstack([1 - s, s]).T
+
+
+PRODUCTS = ["p1p2", "p3", "altpay5"]
+
+PRODUCT_VALUES = {
+    "p1p2": 40_000,
+    "p3": 15_000,
+    "altpay5": 25_000
+}
+
+
+MODEL_PATHS = {
+    "p1p2": "models/p1p2.joblib",
+    "p3": "models/p3.joblib",
+    "altpay5": "models/altpay5.joblib",
+}
+
+CALIBRATORS = {
+    "p1p2": "models/p1p2_platt.joblib",
+    "p3": "models/p3_platt.joblib",
+    "altpay5": "models/altpay5_platt.joblib"
+}
+
+
+models = {k: joblib.load(v) for k, v in MODEL_PATHS.items()}
+calibrators = {k: joblib.load(v) for k, v in CALIBRATORS.items()}
+
+
+def get_scores(product: str, df: pd.DataFrame) -> np.ndarray:
+    model = models[product]
+
+    if product == "p3":
+        X = df
+        return model.predict_score(X)
+
+    X = df[model.feature_names_in_]
+    return model.predict_proba(X)[:, 1]
+
+
+def get_proba(product: str, scores: np.ndarray) -> np.ndarray:
+    scores = np.nan_to_num(scores, nan=0.0, posinf=1.0, neginf=0.0)
+
+    calibrator = calibrators[product]
+    return calibrator.predict_proba(scores.reshape(-1, 1))[:, 1]
+
+
+def compute_expected_value(product: str, proba: np.ndarray) -> np.ndarray:
+    return proba * PRODUCT_VALUES[product]
 
 
 def main():
+
     df = load_data()
     df = process_dtypes(df)
     df = fill_missing_values(df)
-    df = build_features(df, drop_dttm_cols=False)
+    df = build_features(df, drop_dttm_columns=False)
 
-    max_month = df['month'].max()
+    max_month = df["month"].max()
+    df = df[df["month"] == max_month]
 
-    df_p1p2 = make_product_df(df, "p1p2")
-    df_p3 = make_product_df(df, "p3")
-    df_altpay5 = make_product_df(df, "altpay5")
+    
 
-    p3_proba_in_rule = df_p3[df_p3['rule_flag_p3'] == 1]['target'].mean()
-    p3_proba_out_rule = df_p3[df_p3['rule_flag_p3'] == 0]['target'].mean()
+    results = []
 
-    df_p1p2 = df_p1p2[df_p1p2['month'] == max_month]
-    df_p3 = df_p3[df_p3['month'] == max_month]
-    df_altpay5 = df_altpay5[df_altpay5['month'] == max_month]
+    for product in PRODUCTS:
 
-    model_p1p2 = joblib.load("models/logreg_p1p2_wo_scaled_features.joblib")
-    model_altpay5 = joblib.load("models/logreg_altpay5_wo_scaled_features.joblib")
+        df_p = make_product_df(df, product)
 
-    df_p1p2['proba'] = model_p1p2.predict_proba(df_p1p2)[:, 1]
-    df_p3.loc[df_p3['rule_flag_p3'] == 1, 'proba'] = p3_proba_in_rule
-    df_p3.loc[df_p3['rule_flag_p3'] == 0, 'proba'] = p3_proba_out_rule
-    df_altpay5['proba'] = model_altpay5.predict_proba(df_altpay5)[:, 1]
+        scores = get_scores(product, df_p)
 
-    df_p1p2['expected_value'] = df_p1p2['proba'] * P1P2_VALUE
-    df_p3['expected_value'] = df_p3['proba'] * P3_VALUE
-    df_altpay5['expected_value'] = df_altpay5['proba'] * ALTPAY5_VALUE
+        proba = get_proba(product, scores)
 
+        ev = compute_expected_value(product, proba)
+        ev = np.nan_to_num(ev, nan=0.0)
 
-    df_p1p2['relevant_product'] = 'P1P2'
-    df_p3['relevant_product'] = 'P3'
-    df_altpay5['relevant_product'] = 'Altpay5'
+        out = pd.DataFrame({
+            "inn": df_p["inn"].values,
+            "inn_status": df_p["inn_status"],
+            "first_trx_month_inn": df_p["first_trx_month_inn"],
+            "current_segment_inn": df_p["current_segment_inn"],
+            "top_mcc_group_inn": df_p["top_mcc_group_inn"],
+            "who_is_this_first_inn": df_p["who_is_this_first_inn"],
+            "real_kam_on_inn": df_p["real_kam_on_inn"],
+            "turnover_ma_3m": df_p["turnover_ma_3m"],
+            "cnt_trx_ma_3m": df_p["cnt_trx_ma_3m"],
+            "avg_check_wma_3m": df_p["avg_check_wma_3m"],
+            "relevant_product": product,
+            "expected_value": ev
+        })
 
-    df_all_products = pd.concat([
-        df_p1p2,
-        df_p3,
-        df_altpay5
-    ])
+        results.append(out)
 
+    df_all = pd.concat(results, ignore_index=True)
 
-    df_out = df_all_products[OUTPUT_COLS].copy()
+    df_all = df_all.sort_values("expected_value", ascending=False)
 
-    df_out.to_csv("outputs/predictions.csv", index=False)
+    df_all.to_csv("outputs/predictions.csv", index=False)
 
 
 if __name__ == "__main__":

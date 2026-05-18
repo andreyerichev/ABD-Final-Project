@@ -169,7 +169,7 @@ def drop_dttm_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_features(df: pd.DataFrame, drop_dttm_cols: bool = True) -> pd.DataFrame:
+def build_features(df: pd.DataFrame, drop_dttm_columns: bool = True) -> pd.DataFrame:
     """
     Собирает все признаки в DataFrame.
     Args:
@@ -192,7 +192,7 @@ def build_features(df: pd.DataFrame, drop_dttm_cols: bool = True) -> pd.DataFram
     df = add_rule_flag_product(df, "p3")
     df = add_rule_flag_product(df, "altpay5")
     df = add_became_active_recently(df)
-    if drop_dttm_cols:
+    if drop_dttm_columns:
         df = drop_dttm_cols(df)
     return df
 
