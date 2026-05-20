@@ -24,7 +24,7 @@ class BusinessRuleModel:
         flags = X[self.flag_col].values
 
         norm_scores = (scores - self.min_) / (self.max_ - self.min_ + 1e-9)
-        norm_scores = np.where(flags == 1, 0.0, norm_scores)
+        norm_scores = np.where(flags == 1, norm_scores, 0.0)
 
         return norm_scores
 
